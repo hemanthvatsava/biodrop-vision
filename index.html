@@ -17,23 +17,24 @@
       align-items: center;
       min-height: 100vh;
     }
-    h2 { font-size: 1.2rem; margin-bottom: 4px; color: #58a6ff; }
-    p.subtitle { font-size: 0.8rem; color: #8b949e; margin-bottom: 12px; }
+    h2 { font-size: 1.15rem; margin-bottom: 4px; color: #58a6ff; }
+    p.subtitle { font-size: 0.8rem; color: #8b949e; margin-bottom: 10px; }
     
     .status-badge {
       background: #21262d;
       border: 1px solid #30363d;
       padding: 6px 14px;
       border-radius: 20px;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       color: #f0883e;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
       font-weight: 600;
+      word-break: break-word;
       max-width: 90%;
     }
     .status-badge.connected { color: #3fb950; border-color: #238636; }
 
-    .btn-group { display: flex; gap: 10px; margin-bottom: 12px; width: 100%; max-width: 400px; }
+    .btn-group { display: flex; gap: 8px; margin-bottom: 10px; width: 100%; max-width: 400px; }
     button {
       flex: 1;
       padding: 12px;
@@ -63,49 +64,61 @@
     canvas { width: 100%; height: 100%; display: block; }
 
     .telemetry-card {
-      margin-top: 12px;
+      margin-top: 10px;
       width: 100%;
       max-width: 380px;
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 8px;
-      padding: 12px;
+      padding: 10px;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 6px;
       text-align: left;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
     }
-    .telemetry-card span.label { color: #8b949e; display: block; font-size: 0.72rem; text-transform: uppercase; }
-    .telemetry-card span.val { color: #f0f6fc; font-weight: bold; font-family: monospace; font-size: 1rem; }
+    .telemetry-card span.label { color: #8b949e; display: block; font-size: 0.7rem; text-transform: uppercase; }
+    .telemetry-card span.val { color: #f0f6fc; font-weight: bold; font-family: monospace; font-size: 0.95rem; }
 
-    .debug-box {
+    .debug-container {
       margin-top: 10px;
       width: 100%;
       max-width: 380px;
-      height: 100px;
+      text-align: left;
+    }
+    .debug-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+      color: #8b949e;
+      margin-bottom: 4px;
+    }
+    .debug-box {
+      width: 100%;
+      height: 110px;
       background: #010409;
       border: 1px solid #30363d;
       border-radius: 6px;
       padding: 6px;
-      font-family: ui-monospace, SFMono-Regular, monospace;
-      font-size: 0.7rem;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.68rem;
       color: #7ee787;
-      text-align: left;
       overflow-y: auto;
       white-space: pre-wrap;
+      word-break: break-all;
     }
   </style>
 </head>
 <body>
 
   <h2>🌱 BioDrop AI Vision Hub</h2>
-  <p class="subtitle">Direct Rover Link & Target Tracker</p>
+  <p class="subtitle">Diagnostic BLE Live Trace & Vision Engine</p>
 
   <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
 
   <div class="btn-group">
-    <button class="btn-ble" onclick="connectHub()">1. Pair & Launch</button>
+    <button class="btn-ble" onclick="connectHub()">1. Pair Hub</button>
     <button class="btn-cam" onclick="startCamera()">2. Start Camera</button>
   </div>
 
@@ -124,7 +137,7 @@
       <span id="targetSizeVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">Packet Rate</span>
+      <span class="label">BLE Stream Rate</span>
       <span id="packetRateVal" class="val">0 Hz</span>
     </div>
     <div>
@@ -133,13 +146,21 @@
     </div>
   </div>
 
-  <div id="debugLog" class="debug-box">[Ready] Turn on hub and tap "1. Pair & Launch"&#10;</div>
+  <div class="debug-container">
+    <div class="debug-header">
+      <span>BLE Diagnostic Trace:</span>
+      <span style="text-decoration: underline; cursor: pointer;" onclick="clearLog()">Clear</span>
+    </div>
+    <div id="debugLog" class="debug-box">[Ready] Tap "1. Pair Hub" to begin.&#10;</div>
+  </div>
 
   <script>
     const UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
     const UART_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 
-    let txChar = null;
+    let txCharacteristic = null;
+    let cameraStarted = false;
+
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('outputCanvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -155,6 +176,11 @@
       const time = new Date().toISOString().split('T')[1].slice(0, 8);
       debugLog.innerText += `[${time}] ${msg}\n`;
       debugLog.scrollTop = debugLog.scrollHeight;
+      console.log(`[Trace] ${msg}`);
+    }
+
+    function clearLog() {
+      debugLog.innerText = '';
     }
 
     let packetsSent = 0;
@@ -163,54 +189,9 @@
       packetsSent = 0;
     }, 1000);
 
-    // MicroPython receiver code sent directly into REPL upon connection
-    const HUB_CODE = `
-from pybricks.hubs import PrimeHub
-from pybricks.parameters import Axis, Direction, Port
-from pybricks.pupdevices import Motor
-from pybricks.robotics import DriveBase
-import uselect, usys
-
-hub = PrimeHub(top_side=Axis.Z, front_side=Axis.Y)
-hub.speaker.volume(100)
-left_motor = Motor(Port.F, Direction.COUNTERCLOCKWISE)
-right_motor = Motor(Port.B, Direction.CLOCKWISE)
-drive = DriveBase(left_motor, right_motor, 56, 114)
-
-poller = uselect.poll()
-poller.register(usys.stdin, uselect.POLLIN)
-
-hub.display.char("R")
-hub.speaker.beep(880, 150)
-
-buf = ""
-while True:
-    while poller.poll(0):
-        c = usys.stdin.read(1)
-        if not c:
-            break
-        if c in ("\\n", "\\r"):
-            if buf:
-                try:
-                    p = buf.strip().split(",")
-                    if len(p) >= 2:
-                        x = int(p[0])
-                        size = int(p[1])
-                        hub.display.pixel(2, 2, 100)
-                        err = x - 50
-                        steer = err * 2
-                        speed = 130 if size < 35 else 0
-                        drive.drive(speed, steer)
-                except:
-                    pass
-                buf = ""
-        else:
-            buf += c
-`;
-
     async function connectHub() {
       try {
-        log("Scanning for Pybricks Hub...");
+        log("Step 1: Requesting BLE Peripheral...");
         statusBadge.innerText = "Scanning for Hub...";
         statusBadge.classList.remove('connected');
 
@@ -222,42 +203,29 @@ while True:
           optionalServices: [UART_SERVICE]
         });
 
-        log("Connecting to GATT...");
+        log(`Target confirmed: ${device.name || "Hub"}`);
+
+        device.addEventListener('gattserverdisconnected', () => {
+          log("Event: Hub disconnected!");
+          statusBadge.innerText = "BLE: Disconnected";
+          statusBadge.classList.remove('connected');
+          txCharacteristic = null;
+        });
+
+        log("Step 2: Connecting to GATT Server...");
         const server = await device.gatt.connect();
-        
-        await new Promise(r => setTimeout(r, 400));
+
+        await new Promise(r => setTimeout(r, 350));
+        log("Step 3: Resolving Nordic UART Service...");
+
         const service = await server.getPrimaryService(UART_SERVICE);
-        txChar = await service.getCharacteristic(UART_TX);
+        txCharacteristic = await service.getCharacteristic(UART_TX);
 
-        log("GATT linked! Bootstrapping Python engine on Hub...");
-        statusBadge.innerText = "Launching Script on Hub...";
-
-        // Step 1: Send Ctrl+C twice to break any previous loop
-        await txChar.writeValueWithoutResponse(new Uint8Array([0x03, 0x03]));
-        await new Promise(r => setTimeout(r, 300));
-
-        // Step 2: Send Ctrl+E to enter MicroPython Paste Mode
-        await txChar.writeValueWithoutResponse(new Uint8Array([0x05]));
-        await new Promise(r => setTimeout(r, 200));
-
-        // Step 3: Stream the Python program text in chunks
-        const encoded = new TextEncoder().encode(HUB_CODE.trim() + "\n");
-        const chunkSize = 64;
-        for (let i = 0; i < encoded.length; i += chunkSize) {
-          const chunk = encoded.slice(i, i + chunkSize);
-          await txChar.writeValueWithoutResponse(chunk);
-          await new Promise(r => setTimeout(r, 25));
-        }
-
-        // Step 4: Send Ctrl+D to execute the pasted program
-        await new Promise(r => setTimeout(r, 200));
-        await txChar.writeValueWithoutResponse(new Uint8Array([0x04]));
-
-        log("SUCCESS: Program executed! Hub shows 'R'.");
-        statusBadge.innerText = "BLE: Connected & Running";
+        log("SUCCESS: Hub is fully connected and ready for streaming.");
+        statusBadge.innerText = "BLE: Connected to Rover Hub";
         statusBadge.classList.add('connected');
       } catch (err) {
-        log(`BLE Error: ${err.message || err.name || err}`);
+        log(`FATAL: ${err.name || 'Error'} -> ${err.message || err}`);
         statusBadge.innerText = "BLE Error: " + (err.message || err.name || "Failed");
         statusBadge.classList.remove('connected');
       }
@@ -265,29 +233,45 @@ while True:
 
     async function startCamera() {
       try {
-        log("Starting Camera feed...");
+        log("Requesting camera stream...");
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { 
             facingMode: { ideal: "environment" },
-            width: { ideal: 320 },
-            height: { ideal: 240 }
+            width: { ideal: 640 },
+            height: { ideal: 480 }
           },
           audio: false
         });
+
         video.srcObject = stream;
-        video.play();
-        requestAnimationFrame(processVideoFrame);
+        video.setAttribute("playsinline", "true");
+        video.setAttribute("webkit-playsinline", "true");
+        video.muted = true;
+
+        video.onloadedmetadata = async () => {
+          try {
+            await video.play();
+            log(`Camera active: ${video.videoWidth}x${video.videoHeight}`);
+            if (!cameraStarted) {
+              cameraStarted = true;
+              requestAnimationFrame(processVideoFrame);
+            }
+          } catch (playErr) {
+            log(`Video play error: ${playErr.message}`);
+          }
+        };
       } catch (err) {
         log(`Camera Error: ${err.message}`);
+        alert("Camera Error: " + err.message);
       }
     }
 
     let lastSendTime = 0;
 
     function processVideoFrame(timestamp) {
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+      if (video.readyState >= video.HAVE_CURRENT_DATA) {
+        canvas.width = video.videoWidth || 320;
+        canvas.height = video.videoHeight || 240;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -322,6 +306,7 @@ while True:
           lockStatusVal.innerText = "LOCKED";
           lockStatusVal.style.color = "#3fb950";
 
+          // Reticle drawing
           ctx.strokeStyle = "#3fb950";
           ctx.lineWidth = 3;
           ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
@@ -330,12 +315,15 @@ while True:
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          if (txChar && (timestamp - lastSendTime > 60)) {
+          // Stream coordinates over Nordic UART TX characteristic
+          if (txCharacteristic && (timestamp - lastSendTime > 60)) {
             lastSendTime = timestamp;
             const payload = new TextEncoder().encode(`${normX},${normSize}\n`);
-            txChar.writeValueWithoutResponse(payload)
+            txCharacteristic.writeValueWithoutResponse(payload)
               .then(() => { packetsSent++; })
-              .catch(() => {});
+              .catch((e) => {
+                log(`Write Error: ${e.message}`);
+              });
           }
         } else {
           targetXVal.innerText = "--";
