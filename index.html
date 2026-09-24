@@ -220,8 +220,19 @@
         const service = await server.getPrimaryService(PYBRICKS_SERVICE);
         txCharacteristic = await service.getCharacteristic(PYBRICKS_CHAR);
 
-        log("SUCCESS: Pybricks Native Link locked! Ready to stream.");
-        statusBadge.innerText = "BLE: Connected (Pybricks Link)";
+        // Step 3b: Enable notifications so the hub recognizes an active host session
+        await txCharacteristic.startNotifications();
+        txCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
+          // Inbound Pybricks event data
+        });
+        log("Notifications subscribed.");
+
+        // Step 4: Send command 0x00 to trigger execution of the flashed program ('R')
+        await txCharacteristic.writeValueWithoutResponse(new Uint8Array([0x00]));
+        log("Program start command (0x00) dispatched.");
+
+        log("SUCCESS: Hub locked & running! Bluetooth ring should be solid.");
+        statusBadge.innerText = "BLE: Connected & Running";
         statusBadge.classList.add('connected');
       } catch (err) {
         log(`FATAL: ${err.name || 'Error'} -> ${err.message || err}`);
