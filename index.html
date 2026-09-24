@@ -118,7 +118,6 @@
   </div>
 
   <script>
-    // Pybricks and Nordic UART Service Definitions
     const PYBRICKS_SERVICE = 'c5f50001-8280-46da-89f4-6d8051e4aeef';
     const PYBRICKS_COMMAND_CHAR = 'c5f50002-8280-46da-89f4-6d8051e4aeef';
     const UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -148,18 +147,19 @@
         statusBadge.innerText = "Scanning for SPIKE Hub...";
         statusBadge.classList.remove('connected');
 
-        // Filter explicitly by the Pybricks Service UUID so only the Hub appears
         const device = await navigator.bluetooth.requestDevice({
           filters: [
-            { services: [PYBRICKS_SERVICE] }
+            { services: [PYBRICKS_SERVICE] },
+            { services: [UART_SERVICE] }
           ],
           optionalServices: [
             PYBRICKS_SERVICE,
-            UART_SERVICE
+            UART_SERVICE,
+            '0000180a-0000-1000-8000-00805f9b34fb'
           ]
         });
 
-        statusBadge.innerText = "Connecting to GATT...";
+        statusBadge.innerText = "Connecting to GATT Server...";
 
         device.addEventListener('gattserverdisconnected', () => {
           statusBadge.innerText = "BLE: Disconnected";
@@ -169,24 +169,26 @@
 
         const server = await device.gatt.connect();
 
-        // 350ms delay for iOS CoreBluetooth service discovery
-        await new Promise(resolve => setTimeout(resolve, 350));
+        // Delay to allow CoreBluetooth discovery to stabilize
+        await new Promise(resolve => setTimeout(resolve, 400));
 
-        // Connect to Pybricks command stream or fallback to Nordic UART
+        statusBadge.innerText = "Resolving Service Handles...";
+
         try {
-          const service = await server.getPrimaryService(PYBRICKS_SERVICE);
-          txCharacteristic = await service.getCharacteristic(PYBRICKS_COMMAND_CHAR);
-          isPybricksService = true;
-        } catch (e) {
-          const service = await server.getPrimaryService(UART_SERVICE);
-          txCharacteristic = await service.getCharacteristic(UART_TX);
+          const nus = await server.getPrimaryService(UART_SERVICE);
+          txCharacteristic = await nus.getCharacteristic(UART_TX);
           isPybricksService = false;
+        } catch (nusErr) {
+          const pySvc = await server.getPrimaryService(PYBRICKS_SERVICE);
+          txCharacteristic = await pySvc.getCharacteristic(PYBRICKS_COMMAND_CHAR);
+          isPybricksService = true;
         }
         
         statusBadge.innerText = "BLE: Connected to Rover Hub";
         statusBadge.classList.add('connected');
       } catch (err) {
-        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Busy or connection cancelled";
+        console.error("BLE Connect Error:", err);
+        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Service resolution failed";
         statusBadge.innerText = "BLE Error: " + errMsg;
         statusBadge.classList.remove('connected');
       }
@@ -218,12 +220,10 @@
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Scan frame pixels for target green color
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = frame.data;
         let sumX = 0, sumY = 0, count = 0;
 
-        // Sub-sample grid step
         const step = 4;
         for (let y = 0; y < canvas.height; y += step) {
           for (let x = 0; x < canvas.width; x += step) {
@@ -232,7 +232,6 @@
             const g = data[idx + 1];
             const b = data[idx + 2];
 
-            // Green detection threshold
             if (g > 85 && g > r * 1.35 && g > b * 1.35) {
               sumX += x;
               sumY += y;
@@ -245,10 +244,7 @@
           const avgX = sumX / count;
           const avgY = sumY / count;
           
-          // Normalized X (0=Left, 50=Center, 100=Right)
           const normX = Math.round((avgX / canvas.width) * 100);
-          
-          // Normalized relative mass / size (0-100)
           const normSize = Math.min(100, Math.round((count / ((canvas.width * canvas.height) / (step * step) * 0.15)) * 100));
 
           targetXVal.innerText = normX;
@@ -256,7 +252,6 @@
           lockStatusVal.innerText = "LOCKED";
           lockStatusVal.style.color = "#3fb950";
 
-          // Reticle drawing
           ctx.strokeStyle = "#3fb950";
           ctx.lineWidth = 3;
           ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
@@ -265,16 +260,14 @@
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          // Transmit coordinates every 55ms
           if (txCharacteristic && (timestamp - lastSendTime > 55)) {
             lastSendTime = timestamp;
             const rawText = new TextEncoder().encode(`${normX},${normSize}\n`);
 
             let payload;
             if (isPybricksService) {
-              // Prepend 0x06 byte (PBIO Write to stdin) so Pybricks routes to sys.stdin
               payload = new Uint8Array(rawText.length + 1);
-              payload[0] = 0x06;
+              payload[0] = 0x06; // PBIO Write to stdin command byte
               payload.set(rawText, 1);
             } else {
               payload = rawText;
