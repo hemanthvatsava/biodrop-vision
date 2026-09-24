@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>BioDrop AI — Rover Vision Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #0d1117;
+      color: #e6edf3;
+      text-align: center;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    h2 { font-size: 1.25rem; margin-bottom: 6px; color: #58a6ff; }
+    p.subtitle { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; }
+    
+    .status-badge {
+      background: #21262d;
+      border: 1px solid #30363d;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      color: #f0883e;
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+    .status-badge.connected { color: #3fb950; border-color: #238636; }
+
+    .btn-group { display: flex; gap: 10px; margin-bottom: 14px; width: 100%; max-width: 400px; }
+    button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      transition: opacity 0.2s;
+    }
+    button:active { opacity: 0.8; }
+    .btn-ble { background-color: #238636; color: white; }
+    .btn-cam { background-color: #1f6feb; color: white; }
+
+    .feed-container {
+      position: relative;
+      width: 100%;
+      max-width: 380px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid #30363d;
+      background: #000;
+      aspect-ratio: 4 / 3;
+    }
+    video { display: none; }
+    canvas { width: 100%; height: 100%; display: block; }
+
+    .telemetry-card {
+      margin-top: 14px;
+      width: 100%;
+      max-width: 380px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      text-align: left;
+      font-size: 0.85rem;
+    }
+    .telemetry-card span.label { color: #8b949e; display: block; font-size: 0.75rem; text-transform: uppercase; }
+    .telemetry-card span.val { color: #f0f6fc; font-weight: bold; font-family: monospace; font-size: 1rem; }
+  </style>
+</head>
+<body>
+
+  <h2>🌱 BioDrop AI Vision Hub</h2>
+  <p class="subtitle">FLL Innovation Ground Unit — Optical Target Tracker</p>
+
+  <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
+
+  <div class="btn-group">
+    <button class="btn-ble" onclick="connectHub()">1. Pair Hub</button>
+    <button class="btn-cam" onclick="startCamera()">2. Start Camera</button>
+  </div>
+
+  <div class="feed-container">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="outputCanvas"></canvas>
+  </div>
+
+  <div class="telemetry-card">
+    <div>
+      <span class="label">Normalized Target X</span>
+      <span id="targetXVal" class="val">--</span>
+    </div>
+    <div>
+      <span class="label">Target Relative Size</span>
+      <span id="targetSizeVal" class="val">--</span>
+    </div>
+    <div>
+      <span class="label">BLE Packet Rate</span>
+      <span id="packetRateVal" class="val">0 Hz</span>
+    </div>
+    <div>
+      <span class="label">Vision Lock</span>
+      <span id="lockStatusVal" class="val" style="color: #f85149;">LOST</span>
+    </div>
+  </div>
+
+  <script>
+    // Pybricks Nordic UART Service & Characteristic UUIDs
+    const UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+    const UART_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+
+    let txCharacteristic = null;
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('outputCanvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    
+    const statusBadge = document.getElementById('statusBadge');
+    const targetXVal = document.getElementById('targetXVal');
+    const targetSizeVal = document.getElementById('targetSizeVal');
+    const packetRateVal = document.getElementById('packetRateVal');
+    const lockStatusVal = document.getElementById('lockStatusVal');
+
+    let packetsSent = 0;
+    setInterval(() => {
+      packetRateVal.innerText = `${packetsSent} Hz`;
+      packetsSent = 0;
+    }, 1000);
+
+    async function connectHub() {
+      try {
+        statusBadge.innerText = "Scanning for SPIKE Hub...";
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'Pybricks' }],
+          optionalServices: [UART_SERVICE]
+        });
+
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(UART_SERVICE);
+        txCharacteristic = await service.getCharacteristic(UART_TX);
+        
+        statusBadge.innerText = "BLE: Connected to Rover Hub";
+        statusBadge.classList.add('connected');
+      } catch (err) {
+        statusBadge.innerText = "BLE Error: " + err.message;
+        statusBadge.classList.remove('connected');
+      }
+    }
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: { ideal: "environment" },
+            width: { ideal: 320 },
+            height: { ideal: 240 }
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.play();
+        requestAnimationFrame(processVideoFrame);
+      } catch (err) {
+        alert("Camera Error: " + err.message);
+      }
+    }
+
+    let lastSendTime = 0;
+
+    function processVideoFrame(timestamp) {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Scan frame pixels for target color (e.g., bright green seed pod / marker)
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = frame.data;
+        let sumX = 0, sumY = 0, count = 0;
+
+        // Sub-sample grid step for high FPS
+        const step = 4;
+        for (let y = 0; y < canvas.height; y += step) {
+          for (let x = 0; x < canvas.width; x += step) {
+            const idx = (y * canvas.width + x) * 4;
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+
+            // Filter for bright green targets
+            if (g > 85 && g > r * 1.35 && g > b * 1.35) {
+              sumX += x;
+              sumY += y;
+              count++;
+            }
+          }
+        }
+
+        if (count > 15) {
+          const avgX = sumX / count;
+          const avgY = sumY / count;
+          
+          // Normalize coordinates: X from 0 (left) to 100 (right)
+          const normX = Math.round((avgX / canvas.width) * 100);
+          
+          // Estimate target size from 0 to 100 based on pixel mass
+          const normSize = Math.min(100, Math.round((count / ((canvas.width * canvas.height) / (step * step) * 0.15)) * 100));
+
+          targetXVal.innerText = normX;
+          targetSizeVal.innerText = normSize;
+          lockStatusVal.innerText = "LOCKED";
+          lockStatusVal.style.color = "#3fb950";
+
+          // Render crosshair reticle on canvas
+          ctx.strokeStyle = "#3fb950";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
+          ctx.beginPath();
+          ctx.moveTo(avgX, avgY - 40); ctx.lineTo(avgX, avgY + 40);
+          ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
+          ctx.stroke();
+
+          // Transmit to Pybricks at ~15-20 Hz (every 50-60 ms)
+          if (txCharacteristic && (timestamp - lastSendTime > 55)) {
+            lastSendTime = timestamp;
+            const payload = new TextEncoder().encode(`${normX},${normSize}\n`);
+            txCharacteristic.writeValueWithoutResponse(payload).catch(() => {});
+            packetsSent++;
+          }
+        } else {
+          targetXVal.innerText = "--";
+          targetSizeVal.innerText = "--";
+          lockStatusVal.innerText = "LOST";
+          lockStatusVal.style.color = "#f85149";
+        }
+      }
+
+      requestAnimationFrame(processVideoFrame);
+    }
+  </script>
+</body>
+</html>
