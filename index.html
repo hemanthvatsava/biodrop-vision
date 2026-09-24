@@ -118,10 +118,9 @@
   </div>
 
   <script>
+    const PYBRICKS_SERVICE = 'c5f50001-8280-46da-89f4-6d8051e4aeef';
     const NORDIC_UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
     const NORDIC_UART_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
-    const PYBRICKS_SVC = 'c5f50001-8280-46da-89f4-6d8051e4aeef';
-    const DEV_INFO_SVC = '0000180a-0000-1000-8000-00805f9b34fb';
 
     let txCharacteristic = null;
     const video = document.getElementById('webcam');
@@ -147,17 +146,16 @@
 
         const device = await navigator.bluetooth.requestDevice({
           filters: [
-            { services: [NORDIC_UART_SERVICE] }
+            { services: [PYBRICKS_SERVICE] }
           ],
           optionalServices: [
-            NORDIC_UART_SERVICE,
-            PYBRICKS_SVC,
-            DEV_INFO_SVC
+            PYBRICKS_SERVICE,
+            NORDIC_UART_SERVICE
           ]
         });
 
-        statusBadge.innerText = "Connecting to GATT...";
-        
+        statusBadge.innerText = "Connecting to GATT Server...";
+
         device.addEventListener('gattserverdisconnected', () => {
           statusBadge.innerText = "BLE: Disconnected";
           statusBadge.classList.remove('connected');
@@ -165,14 +163,16 @@
         });
 
         const server = await device.gatt.connect();
+        await new Promise(r => setTimeout(r, 300));
+
         const service = await server.getPrimaryService(NORDIC_UART_SERVICE);
         txCharacteristic = await service.getCharacteristic(NORDIC_UART_TX);
-        
+
         statusBadge.innerText = "BLE: Connected to Pybricks Hub";
         statusBadge.classList.add('connected');
       } catch (err) {
         console.error("BLE Error details:", err);
-        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Connection cancelled or device busy";
+        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Busy or connection refused";
         statusBadge.innerText = "BLE Error: " + errMsg;
         statusBadge.classList.remove('connected');
       }
