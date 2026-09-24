@@ -29,6 +29,8 @@
       color: #f0883e;
       margin-bottom: 14px;
       font-weight: 600;
+      word-break: break-word;
+      max-width: 90%;
     }
     .status-badge.connected { color: #3fb950; border-color: #238636; }
 
@@ -82,12 +84,12 @@
 <body>
 
   <h2>🌱 BioDrop AI Vision Hub</h2>
-  <p class="subtitle">FLL Innovation Ground Unit — Optical Target Tracker</p>
+  <p class="subtitle">Target: Pybricks Hub</p>
 
   <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
 
   <div class="btn-group">
-    <button class="btn-ble" onclick="connectHub()">1. Pair Hub</button>
+    <button class="btn-ble" onclick="connectHub()">1. Pair Pybricks Hub</button>
     <button class="btn-cam" onclick="startCamera()">2. Start Camera</button>
   </div>
 
@@ -98,19 +100,19 @@
 
   <div class="telemetry-card">
     <div>
-      <span class="label">Normalized Target X</span>
+      <span class="label">Target X (0-100)</span>
       <span id="targetXVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">Target Relative Size</span>
+      <span class="label">Target Size</span>
       <span id="targetSizeVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">BLE Packet Rate</span>
+      <span class="label">Stream Rate</span>
       <span id="packetRateVal" class="val">0 Hz</span>
     </div>
     <div>
-      <span class="label">Vision Lock</span>
+      <span class="label">Optical Lock</span>
       <span id="lockStatusVal" class="val" style="color: #f85149;">LOST</span>
     </div>
   </div>
@@ -141,19 +143,22 @@
 
     async function connectHub() {
       try {
-        statusBadge.innerText = "Scanning for SPIKE Hub...";
+        statusBadge.innerText = "Scanning for Pybricks Hub...";
         statusBadge.classList.remove('connected');
 
-        // Bluefy-friendly selector: acceptAllDevices with service list fallback
+        // Filter explicitly by the hub's broadcast name
         const device = await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
+          filters: [
+            { name: 'Pybricks Hub' },
+            { namePrefix: 'Pybricks' }
+          ],
           optionalServices: [
             NORDIC_UART_SERVICE,
             PYBRICKS_SERVICE
           ]
         });
 
-        statusBadge.innerText = "Connecting to GATT Server...";
+        statusBadge.innerText = "Connecting to GATT...";
         
         device.addEventListener('gattserverdisconnected', () => {
           statusBadge.innerText = "BLE: Disconnected";
@@ -172,11 +177,11 @@
           txCharacteristic = await service.getCharacteristic(PYBRICKS_TX);
         }
         
-        statusBadge.innerText = "BLE: Connected to Rover Hub";
+        statusBadge.innerText = "BLE: Connected to Pybricks Hub";
         statusBadge.classList.add('connected');
       } catch (err) {
         console.error("BLE Error details:", err);
-        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Connection cancelled or unavailable";
+        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Cancelled or not found";
         statusBadge.innerText = "BLE Error: " + errMsg;
         statusBadge.classList.remove('connected');
       }
@@ -208,12 +213,10 @@
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Scan frame pixels for target green color
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = frame.data;
         let sumX = 0, sumY = 0, count = 0;
 
-        // Sub-sample grid step
         const step = 4;
         for (let y = 0; y < canvas.height; y += step) {
           for (let x = 0; x < canvas.width; x += step) {
@@ -235,10 +238,7 @@
           const avgX = sumX / count;
           const avgY = sumY / count;
           
-          // Normalized X (0=Left, 50=Center, 100=Right)
           const normX = Math.round((avgX / canvas.width) * 100);
-          
-          // Normalized relative mass / size (0-100)
           const normSize = Math.min(100, Math.round((count / ((canvas.width * canvas.height) / (step * step) * 0.15)) * 100));
 
           targetXVal.innerText = normX;
@@ -255,7 +255,7 @@
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          // Transmit with CR+LF to ensure Pybricks REPL reads complete line
+          // Send coordinates with carriage return and newline
           if (txCharacteristic && (timestamp - lastSendTime > 55)) {
             lastSendTime = timestamp;
             const payload = new TextEncoder().encode(`${normX},${normSize}\r\n`);
