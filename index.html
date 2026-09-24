@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BioDrop AI — Rover Vision Tracker</title>
+  <title>BioDrop AI — Rover Vision Tracker (Debug)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -96,7 +96,7 @@
     }
     .debug-box {
       width: 100%;
-      height: 110px;
+      height: 140px;
       background: #010409;
       border: 1px solid #30363d;
       border-radius: 6px;
@@ -113,7 +113,7 @@
 <body>
 
   <h2>🌱 BioDrop AI Vision Hub</h2>
-  <p class="subtitle">Pybricks Native Stdin Streamer</p>
+  <p class="subtitle">Diagnostic BLE Live Trace & Vision Engine</p>
 
   <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
 
@@ -137,7 +137,7 @@
       <span id="targetSizeVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">Pybricks Packet Rate</span>
+      <span class="label">BLE Stream Rate</span>
       <span id="packetRateVal" class="val">0 Hz</span>
     </div>
     <div>
@@ -160,6 +160,7 @@
 
     let txCharacteristic = null;
     let cameraStarted = false;
+    let isWriting = false;
 
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('outputCanvas');
@@ -190,7 +191,7 @@
 
     async function connectHub() {
       try {
-        log("Step 1: Requesting Pybricks BLE Peripheral...");
+        log("1. Requesting Pybricks BLE Device...");
         statusBadge.innerText = "Scanning for Hub...";
         statusBadge.classList.remove('connected');
 
@@ -202,37 +203,38 @@
           optionalServices: [PYBRICKS_SERVICE]
         });
 
-        log(`Target confirmed: ${device.name || "Pybricks Hub"}`);
+        log(`Device: ${device.name || "Hub"} (id: ${device.id.slice(0, 8)}...)`);
 
         device.addEventListener('gattserverdisconnected', () => {
-          log("Event: Hub disconnected!");
+          log("WARNING: GATT disconnected!");
           statusBadge.innerText = "BLE: Disconnected";
           statusBadge.classList.remove('connected');
           txCharacteristic = null;
         });
 
-        log("Step 2: Connecting to GATT Server...");
+        log("2. Connecting to GATT Server...");
         const server = await device.gatt.connect();
 
         await new Promise(r => setTimeout(r, 400));
-        log("Step 3: Resolving Pybricks Service...");
+        log("3. Discovering Pybricks Service...");
 
         const service = await server.getPrimaryService(PYBRICKS_SERVICE);
         txCharacteristic = await service.getCharacteristic(PYBRICKS_CHAR);
 
-        // Step 3b: Enable notifications so the hub recognizes an active host session
+        // Inspect supported properties
+        const props = txCharacteristic.properties;
+        log(`Char Props: write=${props.write}, writeWithoutResponse=${props.writeWithoutResponse}, notify=${props.notify}`);
+
+        // Subscribe to notifications to capture hub responses/errors
         await txCharacteristic.startNotifications();
         txCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
-          // Inbound Pybricks event data
+          const val = new Uint8Array(event.target.value.buffer);
+          log(`Hub Notify [${val.length}B]: ${Array.from(val).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' ')}`);
         });
-        log("Notifications subscribed.");
+        log("Notifications active.");
 
-        // Step 4: Send command 0x00 to trigger execution of the flashed program ('R')
-        await txCharacteristic.writeValueWithoutResponse(new Uint8Array([0x00]));
-        log("Program start command (0x00) dispatched.");
-
-        log("SUCCESS: Hub locked & running! Bluetooth ring should be solid.");
-        statusBadge.innerText = "BLE: Connected & Running";
+        log("SUCCESS: Link open. Ready to stream vision data.");
+        statusBadge.innerText = "BLE: Connected & Ready";
         statusBadge.classList.add('connected');
       } catch (err) {
         log(`FATAL: ${err.name || 'Error'} -> ${err.message || err}`);
@@ -272,10 +274,42 @@
         };
       } catch (err) {
         log(`Camera Error: ${err.message}`);
+        alert("Camera Error: " + err.message);
       }
     }
 
     let lastSendTime = 0;
+    let writeAttempts = 0;
+
+    async function transmitCoordinates(normX, normSize) {
+      if (!txCharacteristic || isWriting) return;
+
+      isWriting = true;
+      writeAttempts++;
+      const payloadStr = `${normX},${normSize}\n`;
+      const textBytes = new TextEncoder().encode(payloadStr);
+
+      // Wrap payload with Pybricks PBIO stdin header (0x06)
+      const packet = new Uint8Array(textBytes.length + 1);
+      packet[0] = 0x06;
+      packet.set(textBytes, 1);
+
+      try {
+        if (txCharacteristic.properties.writeWithoutResponse) {
+          await txCharacteristic.writeValueWithoutResponse(packet);
+        } else {
+          await txCharacteristic.writeValueWithResponse(packet);
+        }
+        packetsSent++;
+        if (writeAttempts % 30 === 1) {
+          log(`Sent OK: "${payloadStr.trim()}" (packet size: ${packet.length}B)`);
+        }
+      } catch (err) {
+        log(`WRITE ERROR [attempt #${writeAttempts}]: ${err.message || err}`);
+      } finally {
+        isWriting = false;
+      }
+    }
 
     function processVideoFrame(timestamp) {
       if (video.readyState >= video.HAVE_CURRENT_DATA) {
@@ -315,7 +349,7 @@
           lockStatusVal.innerText = "LOCKED";
           lockStatusVal.style.color = "#3fb950";
 
-          // Reticle visualization
+          // Reticle drawing
           ctx.strokeStyle = "#3fb950";
           ctx.lineWidth = 3;
           ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
@@ -324,18 +358,10 @@
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          // Stream coordinates prepended with PBIO write-to-stdin command byte (0x06)
-          if (txCharacteristic && (timestamp - lastSendTime > 60)) {
+          // Transmit rate limiter (approx. 12-14 Hz)
+          if (timestamp - lastSendTime > 75) {
             lastSendTime = timestamp;
-            const textBytes = new TextEncoder().encode(`${normX},${normSize}\n`);
-            
-            const packet = new Uint8Array(textBytes.length + 1);
-            packet[0] = 0x06;
-            packet.set(textBytes, 1);
-
-            txCharacteristic.writeValueWithoutResponse(packet)
-              .then(() => { packetsSent++; })
-              .catch(() => {});
+            transmitCoordinates(normX, normSize);
           }
         } else {
           targetXVal.innerText = "--";
