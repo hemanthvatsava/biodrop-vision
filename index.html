@@ -118,11 +118,10 @@
   </div>
 
   <script>
-    // Pybricks Nordic UART Service & Characteristic UUIDs
-    const NORDIC_UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-    const NORDIC_UART_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
     const PYBRICKS_SERVICE = '00001623-1212-efde-1623-785feabcd123';
     const PYBRICKS_TX = '00001624-1212-efde-1623-785feabcd123';
+    const NORDIC_UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+    const NORDIC_UART_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 
     let txCharacteristic = null;
     const video = document.getElementById('webcam');
@@ -143,22 +142,21 @@
 
     async function connectHub() {
       try {
-        statusBadge.innerText = "Scanning for Pybricks Hub...";
+        statusBadge.innerText = "Scanning for Pybricks Hub only...";
         statusBadge.classList.remove('connected');
 
-        // Filter explicitly by the hub's broadcast name
+        // Filter strictly by the Pybricks Service UUID to exclude all other BLE devices
         const device = await navigator.bluetooth.requestDevice({
           filters: [
-            { name: 'Pybricks Hub' },
-            { namePrefix: 'Pybricks' }
+            { services: [PYBRICKS_SERVICE] }
           ],
           optionalServices: [
-            NORDIC_UART_SERVICE,
-            PYBRICKS_SERVICE
+            PYBRICKS_SERVICE,
+            NORDIC_UART_SERVICE
           ]
         });
 
-        statusBadge.innerText = "Connecting to GATT...";
+        statusBadge.innerText = "Connecting to Hub...";
         
         device.addEventListener('gattserverdisconnected', () => {
           statusBadge.innerText = "BLE: Disconnected";
@@ -168,19 +166,18 @@
 
         const server = await device.gatt.connect();
         
-        let service;
         try {
-          service = await server.getPrimaryService(NORDIC_UART_SERVICE);
-          txCharacteristic = await service.getCharacteristic(NORDIC_UART_TX);
-        } catch (e) {
-          service = await server.getPrimaryService(PYBRICKS_SERVICE);
+          const service = await server.getPrimaryService(PYBRICKS_SERVICE);
           txCharacteristic = await service.getCharacteristic(PYBRICKS_TX);
+        } catch (e) {
+          const service = await server.getPrimaryService(NORDIC_UART_SERVICE);
+          txCharacteristic = await service.getCharacteristic(NORDIC_UART_TX);
         }
         
-        statusBadge.innerText = "BLE: Connected to Pybricks Hub";
+        statusBadge.innerText = "BLE: Connected to " + (device.name || "Pybricks Hub");
         statusBadge.classList.add('connected');
       } catch (err) {
-        console.error("BLE Error details:", err);
+        console.error("BLE Filter Error:", err);
         const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Cancelled or not found";
         statusBadge.innerText = "BLE Error: " + errMsg;
         statusBadge.classList.remove('connected');
@@ -225,7 +222,7 @@
             const g = data[idx + 1];
             const b = data[idx + 2];
 
-            // Green detection threshold
+            // Green marker threshold
             if (g > 85 && g > r * 1.35 && g > b * 1.35) {
               sumX += x;
               sumY += y;
@@ -246,7 +243,7 @@
           lockStatusVal.innerText = "LOCKED";
           lockStatusVal.style.color = "#3fb950";
 
-          // Reticle drawing
+          // Crosshair reticle
           ctx.strokeStyle = "#3fb950";
           ctx.lineWidth = 3;
           ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
@@ -255,7 +252,7 @@
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          // Send coordinates with carriage return and newline
+          // Stream coordinates with CR+LF termination
           if (txCharacteristic && (timestamp - lastSendTime > 55)) {
             lastSendTime = timestamp;
             const payload = new TextEncoder().encode(`${normX},${normSize}\r\n`);
