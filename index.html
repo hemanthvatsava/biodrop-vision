@@ -11,36 +11,36 @@
       background-color: #0d1117;
       color: #e6edf3;
       text-align: center;
-      padding: 16px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
     }
-    h2 { font-size: 1.25rem; margin-bottom: 6px; color: #58a6ff; }
-    p.subtitle { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; }
+    h2 { font-size: 1.15rem; margin-bottom: 4px; color: #58a6ff; }
+    p.subtitle { font-size: 0.8rem; color: #8b949e; margin-bottom: 10px; }
     
     .status-badge {
       background: #21262d;
       border: 1px solid #30363d;
       padding: 6px 14px;
       border-radius: 20px;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       color: #f0883e;
-      margin-bottom: 14px;
+      margin-bottom: 10px;
       font-weight: 600;
       word-break: break-word;
       max-width: 90%;
     }
     .status-badge.connected { color: #3fb950; border-color: #238636; }
 
-    .btn-group { display: flex; gap: 10px; margin-bottom: 14px; width: 100%; max-width: 400px; }
+    .btn-group { display: flex; gap: 8px; margin-bottom: 10px; width: 100%; max-width: 400px; }
     button {
       flex: 1;
-      padding: 12px;
+      padding: 10px;
       border: none;
       border-radius: 8px;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       font-weight: 600;
       cursor: pointer;
       box-shadow: 0 2px 6px rgba(0,0,0,0.3);
@@ -54,7 +54,7 @@
       position: relative;
       width: 100%;
       max-width: 380px;
-      border-radius: 12px;
+      border-radius: 10px;
       overflow: hidden;
       border: 2px solid #30363d;
       background: #000;
@@ -64,27 +64,57 @@
     canvas { width: 100%; height: 100%; display: block; }
 
     .telemetry-card {
-      margin-top: 14px;
+      margin-top: 10px;
       width: 100%;
       max-width: 380px;
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 8px;
-      padding: 12px;
+      padding: 10px;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 6px;
       text-align: left;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
     }
-    .telemetry-card span.label { color: #8b949e; display: block; font-size: 0.75rem; text-transform: uppercase; }
-    .telemetry-card span.val { color: #f0f6fc; font-weight: bold; font-family: monospace; font-size: 1rem; }
+    .telemetry-card span.label { color: #8b949e; display: block; font-size: 0.7rem; text-transform: uppercase; }
+    .telemetry-card span.val { color: #f0f6fc; font-weight: bold; font-family: monospace; font-size: 0.95rem; }
+
+    /* Debug Console Styling */
+    .debug-container {
+      margin-top: 10px;
+      width: 100%;
+      max-width: 380px;
+      text-align: left;
+    }
+    .debug-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+      color: #8b949e;
+      margin-bottom: 4px;
+    }
+    .debug-box {
+      width: 100%;
+      height: 120px;
+      background: #010409;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.68rem;
+      color: #7ee787;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
 
   <h2>🌱 BioDrop AI Vision Hub</h2>
-  <p class="subtitle">FLL Innovation Ground Unit — Optical Target Tracker</p>
+  <p class="subtitle">Diagnostic BLE Live Trace</p>
 
   <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
 
@@ -100,21 +130,29 @@
 
   <div class="telemetry-card">
     <div>
-      <span class="label">Normalized Target X</span>
+      <span class="label">Target X (0-100)</span>
       <span id="targetXVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">Target Relative Size</span>
+      <span class="label">Target Size</span>
       <span id="targetSizeVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">BLE Packet Rate</span>
+      <span class="label">BLE Stream Rate</span>
       <span id="packetRateVal" class="val">0 Hz</span>
     </div>
     <div>
-      <span class="label">Vision Lock</span>
+      <span class="label">Optical Lock</span>
       <span id="lockStatusVal" class="val" style="color: #f85149;">LOST</span>
     </div>
+  </div>
+
+  <div class="debug-container">
+    <div class="debug-header">
+      <span>BLE Diagnostic Trace:</span>
+      <span style="text-decoration: underline; cursor: pointer;" onclick="clearLog()">Clear</span>
+    </div>
+    <div id="debugLog" class="debug-box">[Ready] Tap "1. Pair Hub" to begin.&#10;</div>
   </div>
 
   <script>
@@ -135,6 +173,18 @@
     const targetSizeVal = document.getElementById('targetSizeVal');
     const packetRateVal = document.getElementById('packetRateVal');
     const lockStatusVal = document.getElementById('lockStatusVal');
+    const debugLog = document.getElementById('debugLog');
+
+    function log(msg) {
+      const time = new Date().toISOString().split('T')[1].slice(0, 8);
+      debugLog.innerText += `[${time}] ${msg}\n`;
+      debugLog.scrollTop = debugLog.scrollHeight;
+      console.log(`[BLE Trace] ${msg}`);
+    }
+
+    function clearLog() {
+      debugLog.innerText = '';
+    }
 
     let packetsSent = 0;
     setInterval(() => {
@@ -144,6 +194,7 @@
 
     async function connectHub() {
       try {
+        log("Step 1: Calling navigator.bluetooth.requestDevice...");
         statusBadge.innerText = "Scanning for SPIKE Hub...";
         statusBadge.classList.remove('connected');
 
@@ -159,43 +210,66 @@
           ]
         });
 
-        statusBadge.innerText = "Connecting to GATT Server...";
+        log(`Device chosen: ${device.name || "Unknown"} (id: ${device.id.slice(0, 8)}...)`);
 
         device.addEventListener('gattserverdisconnected', () => {
+          log("Event: GATT Server Disconnected!");
           statusBadge.innerText = "BLE: Disconnected";
           statusBadge.classList.remove('connected');
           txCharacteristic = null;
         });
 
+        log("Step 2: Connecting to GATT Server...");
         const server = await device.gatt.connect();
+        log(`GATT connected. Connected state: ${server.connected}`);
 
-        // Delay to allow CoreBluetooth discovery to stabilize
-        await new Promise(resolve => setTimeout(resolve, 400));
+        log("Step 2.5: Waiting 450ms for iOS CoreBluetooth discovery...");
+        await new Promise(resolve => setTimeout(resolve, 450));
 
-        statusBadge.innerText = "Resolving Service Handles...";
-
+        log("Step 3: Querying Primary Services...");
+        
+        // Attempt discovering via getPrimaryServices() to print all UUIDs
         try {
+          if (server.getPrimaryServices) {
+            const allServices = await server.getPrimaryServices();
+            log(`Found ${allServices.length} services on hub:`);
+            allServices.forEach(s => log(` - ${s.uuid}`));
+          }
+        } catch (svcListErr) {
+          log(`Notice: getPrimaryServices() listing restricted: ${svcListErr.message}`);
+        }
+
+        // Try Nordic UART Service first
+        try {
+          log(`Probing Nordic UART: ${UART_SERVICE}...`);
           const nus = await server.getPrimaryService(UART_SERVICE);
+          log("Found Nordic UART service. Resolving TX Characteristic...");
           txCharacteristic = await nus.getCharacteristic(UART_TX);
           isPybricksService = false;
+          log("Nordic UART TX Characteristic acquired!");
         } catch (nusErr) {
+          log(`Nordic UART bypass: ${nusErr.message}`);
+          log(`Probing Pybricks Service: ${PYBRICKS_SERVICE}...`);
           const pySvc = await server.getPrimaryService(PYBRICKS_SERVICE);
+          log("Found Pybricks service. Resolving Command Characteristic...");
           txCharacteristic = await pySvc.getCharacteristic(PYBRICKS_COMMAND_CHAR);
           isPybricksService = true;
+          log("Pybricks Command Characteristic acquired!");
         }
-        
+
         statusBadge.innerText = "BLE: Connected to Rover Hub";
         statusBadge.classList.add('connected');
+        log("SUCCESS: Hub is fully connected and ready for streaming.");
       } catch (err) {
-        console.error("BLE Connect Error:", err);
-        const errMsg = (err && (err.message || err.name)) ? (err.message || err.name) : "Service resolution failed";
-        statusBadge.innerText = "BLE Error: " + errMsg;
+        log(`FATAL: ${err.name || 'Error'} -> ${err.message || err}`);
+        statusBadge.innerText = "BLE Error: " + (err.message || err.name || "Failed");
         statusBadge.classList.remove('connected');
       }
     }
 
     async function startCamera() {
       try {
+        log("Requesting camera stream...");
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { 
             facingMode: { ideal: "environment" },
@@ -206,8 +280,10 @@
         });
         video.srcObject = stream;
         video.play();
+        log("Camera stream started.");
         requestAnimationFrame(processVideoFrame);
       } catch (err) {
+        log(`Camera Error: ${err.message}`);
         alert("Camera Error: " + err.message);
       }
     }
@@ -267,7 +343,7 @@
             let payload;
             if (isPybricksService) {
               payload = new Uint8Array(rawText.length + 1);
-              payload[0] = 0x06; // PBIO Write to stdin command byte
+              payload[0] = 0x06;
               payload.set(rawText, 1);
             } else {
               payload = rawText;
@@ -275,7 +351,9 @@
 
             txCharacteristic.writeValueWithoutResponse(payload)
               .then(() => { packetsSent++; })
-              .catch(() => {});
+              .catch((e) => {
+                log(`Write Error: ${e.message}`);
+              });
           }
         } else {
           targetXVal.innerText = "--";
