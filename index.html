@@ -113,7 +113,7 @@
 <body>
 
   <h2>🌱 BioDrop AI Vision Hub</h2>
-  <p class="subtitle">Pybricks Native Stdin Streamer</p>
+  <p class="subtitle">Autonomous Pybricks Bootstrapper & Tracker</p>
 
   <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
 
@@ -137,7 +137,7 @@
       <span id="targetSizeVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">Pybricks Packet Rate</span>
+      <span class="label">Packet Rate</span>
       <span id="packetRateVal" class="val">0 Hz</span>
     </div>
     <div>
@@ -155,7 +155,6 @@
   </div>
 
   <script>
-    // Native Pybricks Service and Characteristic UUIDs
     const PYBRICKS_SERVICE = 'c5f50001-8280-46da-89f4-6d8051e4aeef';
     const PYBRICKS_CHAR    = 'c5f50002-8280-46da-89f4-6d8051e4aeef';
 
@@ -189,6 +188,58 @@
       packetsSent = 0;
     }, 1000);
 
+    // MicroPython rover tracking code injected directly into the hub REPL
+    const HUB_BOOT_SCRIPT = `from pybricks.hubs import PrimeHub
+from pybricks.parameters import Axis, Direction, Port
+from pybricks.pupdevices import Motor
+from pybricks.robotics import DriveBase
+import uselect, usys
+
+hub = PrimeHub(top_side=Axis.Z, front_side=Axis.Y)
+hub.speaker.volume(100)
+lm = Motor(Port.F, Direction.COUNTERCLOCKWISE)
+rm = Motor(Port.B, Direction.CLOCKWISE)
+drive = DriveBase(lm, rm, wheel_diameter=56, axle_track=114)
+
+poller = uselect.poll()
+poller.register(usys.stdin, uselect.POLLIN)
+
+hub.display.char("R")
+hub.speaker.beep(880, 200)
+
+buf = ""
+while True:
+    while poller.poll(0):
+        c = usys.stdin.read(1)
+        if not c:
+            break
+        if c in ("\\n", "\\r"):
+            if buf:
+                try:
+                    p = buf.strip().split(",")
+                    if len(p) >= 2:
+                        x = int(p[0])
+                        sz = int(p[1])
+                        hub.display.pixel(2, 2, 100)
+                        err = x - 50
+                        steer = err * 2
+                        speed = 130 if sz < 35 else 0
+                        drive.drive(speed, steer)
+                except:
+                    pass
+                buf = ""
+        else:
+            buf += c
+`;
+
+    async function sendRawCommand(bytes) {
+      if (!txCharacteristic) return;
+      const packet = new Uint8Array(bytes.length + 1);
+      packet[0] = 0x06; // PBIO stdin payload prefix
+      packet.set(bytes, 1);
+      await txCharacteristic.writeValueWithoutResponse(packet);
+    }
+
     async function connectHub() {
       try {
         log("Step 1: Requesting Pybricks BLE Peripheral...");
@@ -221,8 +272,32 @@
         const service = await server.getPrimaryService(PYBRICKS_SERVICE);
         txCharacteristic = await service.getCharacteristic(PYBRICKS_CHAR);
 
-        log("SUCCESS: Pybricks Native Link locked! Ready to stream.");
-        statusBadge.innerText = "BLE: Connected (Pybricks Link)";
+        log("Step 4: Bootstrapping script into REPL...");
+        statusBadge.innerText = "Launching Script on Hub...";
+
+        // Send Ctrl+C twice to break any active program
+        await sendRawCommand(new Uint8Array([0x03, 0x03]));
+        await new Promise(r => setTimeout(r, 250));
+
+        // Send Ctrl+E to enter MicroPython paste mode
+        await sendRawCommand(new Uint8Array([0x05]));
+        await new Promise(r => setTimeout(r, 150));
+
+        // Stream Python script in chunks
+        const encoded = new TextEncoder().encode(HUB_BOOT_SCRIPT.trim() + "\n");
+        const chunkSize = 64;
+        for (let i = 0; i < encoded.length; i += chunkSize) {
+          const chunk = encoded.slice(i, i + chunkSize);
+          await sendRawCommand(chunk);
+          await new Promise(r => setTimeout(r, 20));
+        }
+
+        // Send Ctrl+D to finish paste mode and execute immediately
+        await new Promise(r => setTimeout(r, 150));
+        await sendRawCommand(new Uint8Array([0x04]));
+
+        log("SUCCESS: Program executed! Hub display shows 'R'.");
+        statusBadge.innerText = "BLE: Connected & Running";
         statusBadge.classList.add('connected');
       } catch (err) {
         log(`FATAL: ${err.name || 'Error'} -> ${err.message || err}`);
@@ -262,6 +337,7 @@
         };
       } catch (err) {
         log(`Camera Error: ${err.message}`);
+        alert("Camera Error: " + err.message);
       }
     }
 
@@ -305,7 +381,7 @@
           lockStatusVal.innerText = "LOCKED";
           lockStatusVal.style.color = "#3fb950";
 
-          // Reticle
+          // Reticle drawing
           ctx.strokeStyle = "#3fb950";
           ctx.lineWidth = 3;
           ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
@@ -314,17 +390,11 @@
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          // Stream coordinates over Pybricks Characteristic with 0x06 stdin prefix
+          // Stream coordinates with 0x06 stdin prefix
           if (txCharacteristic && (timestamp - lastSendTime > 60)) {
             lastSendTime = timestamp;
             const textBytes = new TextEncoder().encode(`${normX},${normSize}\n`);
-            
-            // Allocate payload: 0x06 (PBIO write to stdin) + text data
-            const packet = new Uint8Array(textBytes.length + 1);
-            packet[0] = 0x06;
-            packet.set(textBytes, 1);
-
-            txCharacteristic.writeValueWithoutResponse(packet)
+            sendRawCommand(textBytes)
               .then(() => { packetsSent++; })
               .catch(() => {});
           }
