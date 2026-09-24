@@ -113,7 +113,7 @@
 <body>
 
   <h2>🌱 BioDrop AI Vision Hub</h2>
-  <p class="subtitle">Diagnostic BLE Live Trace & Vision Engine</p>
+  <p class="subtitle">Pybricks Native Stdin Streamer</p>
 
   <div id="statusBadge" class="status-badge">BLE: Disconnected</div>
 
@@ -137,7 +137,7 @@
       <span id="targetSizeVal" class="val">--</span>
     </div>
     <div>
-      <span class="label">BLE Stream Rate</span>
+      <span class="label">Pybricks Packet Rate</span>
       <span id="packetRateVal" class="val">0 Hz</span>
     </div>
     <div>
@@ -155,8 +155,9 @@
   </div>
 
   <script>
-    const UART_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-    const UART_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+    // Native Pybricks Service and Characteristic UUIDs
+    const PYBRICKS_SERVICE = 'c5f50001-8280-46da-89f4-6d8051e4aeef';
+    const PYBRICKS_CHAR    = 'c5f50002-8280-46da-89f4-6d8051e4aeef';
 
     let txCharacteristic = null;
     let cameraStarted = false;
@@ -176,7 +177,6 @@
       const time = new Date().toISOString().split('T')[1].slice(0, 8);
       debugLog.innerText += `[${time}] ${msg}\n`;
       debugLog.scrollTop = debugLog.scrollHeight;
-      console.log(`[Trace] ${msg}`);
     }
 
     function clearLog() {
@@ -191,19 +191,19 @@
 
     async function connectHub() {
       try {
-        log("Step 1: Requesting BLE Peripheral...");
+        log("Step 1: Requesting Pybricks BLE Peripheral...");
         statusBadge.innerText = "Scanning for Hub...";
         statusBadge.classList.remove('connected');
 
         const device = await navigator.bluetooth.requestDevice({
           filters: [
-            { services: [UART_SERVICE] },
+            { services: [PYBRICKS_SERVICE] },
             { namePrefix: 'Pybricks' }
           ],
-          optionalServices: [UART_SERVICE]
+          optionalServices: [PYBRICKS_SERVICE]
         });
 
-        log(`Target confirmed: ${device.name || "Hub"}`);
+        log(`Target confirmed: ${device.name || "Pybricks Hub"}`);
 
         device.addEventListener('gattserverdisconnected', () => {
           log("Event: Hub disconnected!");
@@ -215,14 +215,14 @@
         log("Step 2: Connecting to GATT Server...");
         const server = await device.gatt.connect();
 
-        await new Promise(r => setTimeout(r, 350));
-        log("Step 3: Resolving Nordic UART Service...");
+        await new Promise(r => setTimeout(r, 400));
+        log("Step 3: Resolving Pybricks Service...");
 
-        const service = await server.getPrimaryService(UART_SERVICE);
-        txCharacteristic = await service.getCharacteristic(UART_TX);
+        const service = await server.getPrimaryService(PYBRICKS_SERVICE);
+        txCharacteristic = await service.getCharacteristic(PYBRICKS_CHAR);
 
-        log("SUCCESS: Hub is fully connected and ready for streaming.");
-        statusBadge.innerText = "BLE: Connected to Rover Hub";
+        log("SUCCESS: Pybricks Native Link locked! Ready to stream.");
+        statusBadge.innerText = "BLE: Connected (Pybricks Link)";
         statusBadge.classList.add('connected');
       } catch (err) {
         log(`FATAL: ${err.name || 'Error'} -> ${err.message || err}`);
@@ -262,7 +262,6 @@
         };
       } catch (err) {
         log(`Camera Error: ${err.message}`);
-        alert("Camera Error: " + err.message);
       }
     }
 
@@ -306,7 +305,7 @@
           lockStatusVal.innerText = "LOCKED";
           lockStatusVal.style.color = "#3fb950";
 
-          // Reticle drawing
+          // Reticle
           ctx.strokeStyle = "#3fb950";
           ctx.lineWidth = 3;
           ctx.strokeRect(avgX - 30, avgY - 30, 60, 60);
@@ -315,15 +314,19 @@
           ctx.moveTo(avgX - 40, avgY); ctx.lineTo(avgX + 40, avgY);
           ctx.stroke();
 
-          // Stream coordinates over Nordic UART TX characteristic
+          // Stream coordinates over Pybricks Characteristic with 0x06 stdin prefix
           if (txCharacteristic && (timestamp - lastSendTime > 60)) {
             lastSendTime = timestamp;
-            const payload = new TextEncoder().encode(`${normX},${normSize}\n`);
-            txCharacteristic.writeValueWithoutResponse(payload)
+            const textBytes = new TextEncoder().encode(`${normX},${normSize}\n`);
+            
+            // Allocate payload: 0x06 (PBIO write to stdin) + text data
+            const packet = new Uint8Array(textBytes.length + 1);
+            packet[0] = 0x06;
+            packet.set(textBytes, 1);
+
+            txCharacteristic.writeValueWithoutResponse(packet)
               .then(() => { packetsSent++; })
-              .catch((e) => {
-                log(`Write Error: ${e.message}`);
-              });
+              .catch(() => {});
           }
         } else {
           targetXVal.innerText = "--";
